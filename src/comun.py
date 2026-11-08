@@ -170,11 +170,20 @@ def enrutar(rutas, event):
 
 # ---------- DynamoDB: listados con cursor ----------
 
-def consultar_pagina(tabla, event, **kwargs):
+MAX_LECTURAS_FILTRO = 10  # tope de queries por página filtrada (acota el tiempo de la Lambda)
+
+
+def consultar_pagina(tabla, event, claves=None, **kwargs):
     """Listado de DynamoDB: {limit, items, siguiente}.
 
     DynamoDB no salta a una página N; en vez de ?page= usa ?siguiente=<cursor>
     que devuelve la respuesta anterior.
+
+    Con FilterExpression, el Limit de DynamoDB cuenta los ítems LEÍDOS antes del filtro:
+    una sola query puede volver vacía aunque haya resultados más adelante. Por eso se
+    sigue leyendo (hasta MAX_LECTURAS_FILTRO veces) hasta juntar `limit` ítems.
+    `claves` = atributos de la clave primaria, para cortar justo en `limit` y armar
+    el cursor desde el último ítem devuelto.
     """
     limit = entero(parametro(event, 'limit', 20), 'limit', minimo=1, maximo=100)
     cursor = parametro(event, 'siguiente')
@@ -183,11 +192,26 @@ def consultar_pagina(tabla, event, **kwargs):
             kwargs['ExclusiveStartKey'] = json.loads(base64.urlsafe_b64decode(cursor.encode()))
         except (ValueError, binascii.Error):
             raise DatoInvalido('cursor_invalido', 'siguiente no es un cursor válido')
-    respuesta = tabla.query(Limit=limit, **kwargs)
-    ultima = respuesta.get('LastEvaluatedKey')
+
+    if 'FilterExpression' not in kwargs:
+        respuesta = tabla.query(Limit=limit, **kwargs)
+        items, ultima = respuesta['Items'], respuesta.get('LastEvaluatedKey')
+    else:
+        items, ultima = [], None
+        for _ in range(MAX_LECTURAS_FILTRO):
+            respuesta = tabla.query(Limit=max(limit, 100), **kwargs)
+            items.extend(respuesta['Items'])
+            ultima = respuesta.get('LastEvaluatedKey')
+            if len(items) >= limit or not ultima:
+                break
+            kwargs['ExclusiveStartKey'] = ultima
+        if len(items) > limit and claves:
+            items = items[:limit]
+            ultima = {k: items[-1][k] for k in claves}  # la próxima página empieza después de este
+
     return {
         'limit': limit,
-        'items': respuesta['Items'],
+        'items': items,
         'siguiente': base64.urlsafe_b64encode(a_json(ultima).encode()).decode() if ultima else None,
     }
 

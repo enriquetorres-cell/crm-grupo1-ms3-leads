@@ -171,7 +171,7 @@ def listar_leads(event, ctx):
     kwargs = {'KeyConditionExpression': Key('tenant_id').eq(ctx['tenant_id']) & Key('sk').begins_with('LEAD#')}
     if filtro is not None:
         kwargs['FilterExpression'] = filtro
-    return responder(200, consultar_pagina(leads, event, **kwargs))
+    return responder(200, consultar_pagina(leads, event, claves=('tenant_id', 'sk'), **kwargs))
 
 
 def obtener_lead(event, ctx):
