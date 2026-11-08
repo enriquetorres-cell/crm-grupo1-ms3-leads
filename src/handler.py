@@ -31,7 +31,9 @@ BUCKET = os.environ['BUCKET_IMPORTACIONES']
 _dynamo = boto3.resource('dynamodb')
 leads = _dynamo.Table(TABLA_LEADS)
 carga = _dynamo.Table(TABLA_CARGA)
-cliente_dynamo = _dynamo.meta.client
+# Cliente de bajo nivel para las transacciones: recibe valores ya tipados con _tipado().
+# (El _dynamo.meta.client del recurso los volvería a convertir y llegarían como mapas: ValidationException.)
+cliente_dynamo = boto3.client('dynamodb')
 s3 = boto3.client('s3')
 _serializar = TypeSerializer().serialize
 
