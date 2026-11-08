@@ -1,0 +1,9 @@
+node_modules/
+.serverless/
+.requirements/
+.requirements.zip
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.env
