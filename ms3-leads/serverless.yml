@@ -1,0 +1,130 @@
+# MS3 · Leads (P3). DynamoDB + bucket S3 de importaciones (el CSV subido dispara la Lambda).
+service: crm-ms3-leads
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.12
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  memorySize: 256
+  timeout: 10
+  iam:
+    role: arn:aws:iam::${aws:accountId}:role/LabRole
+  environment:
+    TABLA_LEADS: ${self:custom.prefijo}-leads
+    TABLA_CARGA: ${self:custom.prefijo}-carga
+    BUCKET_IMPORTACIONES: ${self:custom.bucket}
+    TOPICO_EVENTOS: ${cf:crm-compartido-${sls:stage}.TopicoEventosArn}
+  httpApi:
+    cors: true
+    authorizers:
+      tokenCrm:
+        type: request
+        functionArn: ${self:custom.autorizadorArn}
+        identitySource: $request.header.Authorization
+        enableSimpleResponses: true
+        payloadVersion: '2.0'
+        resultTtlInSeconds: 300
+  # Bucket creado por Serverless junto con su evento (sin custom resources, que piden crear roles IAM).
+  s3:
+    importaciones:
+      name: ${self:custom.bucket}
+      publicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # El navegador sube el CSV directo con la URL firmada: necesita CORS para PUT.
+      corsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT]
+            AllowedOrigins: ['*']
+            AllowedHeaders: ['*']
+            MaxAge: 3000
+
+custom:
+  prefijo: crm-ms3-${sls:stage}
+  bucket: crm-importaciones-${aws:accountId}-${sls:stage}
+  autorizadorArn: ${cf:crm-ms1-usuarios-${sls:stage}.AutorizadorArn}
+
+package:
+  patterns:
+    - '!tests/**'
+    - '!**/__pycache__/**'
+
+functions:
+  api:
+    handler: src/handler.main
+    events:
+      - httpApi: { method: GET, path: /ms3/health }
+      - httpApi: { method: GET, path: /ms3/leads, authorizer: { name: tokenCrm } }
+      - httpApi: { method: GET, path: '/ms3/leads/{id}', authorizer: { name: tokenCrm } }
+      - httpApi: { method: POST, path: /ms3/leads, authorizer: { name: tokenCrm } }
+      - httpApi: { method: PATCH, path: '/ms3/leads/{id}/estado', authorizer: { name: tokenCrm } }
+      - httpApi: { method: POST, path: '/ms3/leads/{id}/convertir', authorizer: { name: tokenCrm } }
+      - httpApi: { method: POST, path: /ms3/importaciones, authorizer: { name: tokenCrm } }
+      - httpApi: { method: GET, path: '/ms3/importaciones/{id}', authorizer: { name: tokenCrm } }
+
+  importar:
+    handler: src/handler.importar
+    timeout: 300
+    memorySize: 512
+    events:
+      - s3:
+          bucket: importaciones
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: entrada/
+            - suffix: .csv
+
+  consumidor:
+    handler: src/handler.consumidor
+    events:
+      - sqs:
+          arn: ${cf:crm-compartido-${sls:stage}.ColaMs3Arn}
+          batchSize: 10
+          functionResponseType: ReportBatchItemFailures
+
+resources:
+  Resources:
+    TablaLeads:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.prefijo}-leads
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: tenant_id, AttributeType: S }
+          - { AttributeName: sk, AttributeType: S }
+        KeySchema:
+          - { AttributeName: tenant_id, KeyType: HASH }
+          - { AttributeName: sk, KeyType: RANGE }
+
+    TablaCarga:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.prefijo}-carga
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - { AttributeName: tenant_id, AttributeType: S }
+          - { AttributeName: vendedor, AttributeType: S }
+        KeySchema:
+          - { AttributeName: tenant_id, KeyType: HASH }
+          - { AttributeName: vendedor, KeyType: RANGE }
+
+    PermisoAutorizador:
+      Type: AWS::Lambda::Permission
+      Properties:
+        Action: lambda:InvokeFunction
+        FunctionName: ${self:custom.autorizadorArn}
+        Principal: apigateway.amazonaws.com
+        SourceArn:
+          Fn::Join:
+            - ''
+            - - 'arn:aws:execute-api:'
+              - { Ref: AWS::Region }
+              - ':'
+              - { Ref: AWS::AccountId }
+              - ':'
+              - { Ref: HttpApi }
+              - '/authorizers/*'
