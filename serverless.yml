@@ -63,6 +63,7 @@ functions:
       - httpApi: { method: POST, path: /ms3/leads, authorizer: { name: tokenCrm } }
       - httpApi: { method: PATCH, path: '/ms3/leads/{id}/estado', authorizer: { name: tokenCrm } }
       - httpApi: { method: POST, path: '/ms3/leads/{id}/convertir', authorizer: { name: tokenCrm } }
+      - httpApi: { method: DELETE, path: '/ms3/leads/{id}', authorizer: { name: tokenCrm } }
       - httpApi: { method: POST, path: /ms3/importaciones, authorizer: { name: tokenCrm } }
       - httpApi: { method: GET, path: '/ms3/importaciones/{id}', authorizer: { name: tokenCrm } }
 

@@ -200,6 +200,35 @@ def convertir(event, ctx):
     return responder(200, lead)
 
 
+def eliminar_lead(event, ctx):
+    """Borra el lead, sus marcas de unicidad (EMAIL#, TEL#) y su carga en el reparto, en UNA transacción.
+
+    El contador mensual (MES#) no se descuenta: el límite del plan cuenta los leads CREADOS en el mes.
+    """
+    lead = _lead_visible(ctx, ruta(event, 'id'))
+    reglas.validar_eliminacion(lead)
+    tenant_id = ctx['tenant_id']
+    operaciones = [{'Delete': {
+        'TableName': TABLA_LEADS,
+        'Key': _tipado({'tenant_id': tenant_id, 'sk': lead['sk']}),
+        'ConditionExpression': 'estado = :actual',  # nadie lo cambió entre la lectura y el borrado
+        'ExpressionAttributeValues': _tipado({':actual': lead['estado']}),
+    }}]
+    for prefijo, valor in (('EMAIL', lead.get('email')), ('TEL', lead.get('telefono'))):
+        if valor:
+            operaciones.append({'Delete': {'TableName': TABLA_LEADS,
+                                           'Key': _tipado({'tenant_id': tenant_id, 'sk': f'{prefijo}#{valor}'})}})
+    if lead.get('propietario') and lead['estado'] in reglas.ABIERTOS:
+        operaciones.append(_cambio_de_carga(tenant_id, lead['propietario'], -1))
+    try:
+        cliente_dynamo.transact_write_items(TransactItems=operaciones)
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'TransactionCanceledException':
+            raise ReglaNoCumplida('estado_cambiado', 'Otro usuario cambió este lead; vuelve a cargarlo')
+        raise
+    return responder(200, {'lead_id': lead['lead_id'], 'eliminado': True})
+
+
 def pedir_importacion(event, ctx):
     """Devuelve una URL firmada para subir el CSV directo a S3 (vence en 15 min)."""
     importacion_id = uuid.uuid4().hex
@@ -232,6 +261,7 @@ RUTAS = {
     'POST /ms3/leads': crear_lead,
     'PATCH /ms3/leads/{id}/estado': cambiar_estado,
     'POST /ms3/leads/{id}/convertir': convertir,
+    'DELETE /ms3/leads/{id}': eliminar_lead,
     'POST /ms3/importaciones': pedir_importacion,
     'GET /ms3/importaciones/{id}': ver_importacion,
 }

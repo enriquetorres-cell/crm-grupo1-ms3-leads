@@ -149,5 +149,11 @@ def validar_conversion(lead):
         raise ReglaNoCumplida('puntaje_insuficiente', f'Se necesita puntaje >= {PUNTAJE_MINIMO_CONVERSION}')
 
 
+def validar_eliminacion(lead):
+    """Un lead convertido ya generó su cuenta (MS2) y su oportunidad (MS4): no se borra."""
+    if lead['estado'] == 'convertido':
+        raise ReglaNoCumplida('lead_convertido', 'Un lead convertido no se elimina: ya tiene cuenta y oportunidad')
+
+
 def limite_mensual(plan):
     return LIMITE_LEADS_MES.get(plan, LIMITE_LEADS_MES['basico'])

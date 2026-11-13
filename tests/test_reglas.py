@@ -67,6 +67,13 @@ def test_solo_se_convierte_un_calificado_con_puntaje_suficiente():
         reglas.validar_conversion({'estado': 'contactado', 'puntaje': 90})
 
 
+def test_un_lead_convertido_no_se_elimina():
+    with pytest.raises(ReglaNoCumplida):
+        reglas.validar_eliminacion({'estado': 'convertido'})
+    for estado in ('nuevo', 'contactado', 'calificado', 'descartado'):
+        reglas.validar_eliminacion({'estado': estado})
+
+
 def test_limite_mensual_por_plan():
     assert reglas.limite_mensual('basico') == 1000
     assert reglas.limite_mensual('enterprise') is None
